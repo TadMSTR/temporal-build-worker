@@ -33,17 +33,17 @@ async def main() -> None:
     task_token = base64.b64decode(task_token_b64)
     client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
 
+    handle = client.get_async_activity_handle(task_token=task_token)
+
     if status == "success":
-        await client.complete_async_activity_by_token(
-            task_token,
+        await handle.complete(
             BuildPhaseResult(status="success", output=message),
         )
         print(f"Activity completed: {message or 'success'}")
 
     elif status == "failed":
-        await client.fail_async_activity_by_token(
-            task_token,
-            ApplicationError(message or "Phase failed", type="PhaseFailedError"),
+        await handle.fail(
+            error=ApplicationError(message or "Phase failed", type="PhaseFailedError"),
         )
         print(f"Activity failed: {message or 'no details'}")
 
