@@ -30,7 +30,12 @@ async def main() -> None:
     status = sys.argv[2]
     message = sys.argv[3] if len(sys.argv) > 3 else ""
 
-    task_token = base64.b64decode(task_token_b64)
+    try:
+        task_token = base64.b64decode(task_token_b64)
+    except Exception as e:
+        print(f"Error: invalid task token (base64 decode failed): {e}")
+        sys.exit(1)
+
     client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
 
     handle = client.get_async_activity_handle(task_token=task_token)
