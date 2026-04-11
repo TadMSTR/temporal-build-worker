@@ -1,10 +1,12 @@
+const path = require('path');
+
 module.exports = {
   apps: [
     {
       name: 'helm-temporal-worker',
       script: 'worker.py',
-      interpreter: '/home/ted/repos/personal/helm-temporal-worker/venv/bin/python3',
-      cwd: '/home/ted/repos/personal/helm-temporal-worker',
+      interpreter: path.join(__dirname, 'venv/bin/python3'),
+      cwd: __dirname,
       autorestart: true,
       watch: false,
       max_restarts: 10,
