@@ -30,7 +30,7 @@ from models import BuildPhaseResult, TriageOutput
 TASK_QUEUE_DIR = Path.home() / ".claude" / "task-queue"
 AUDIT_DIR = Path.home() / "repos" / "audits" / "security-audits"
 ACTIVITY_SUMMARY_DIR = Path.home() / "repos" / "personal" / "agent-activity" / "workflows"
-NTFY_URL = "https://ntfy.your-domain.com/claudebox-alerts"  # gitleaks:allow
+NTFY_URL = os.environ.get("NTFY_URL", "https://ntfy.your-domain.com/claudebox-alerts")
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
