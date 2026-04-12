@@ -6,7 +6,19 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from activities.build_phase import execute_build_phase
+from activities.build_pipeline_activities import (
+    apply_flag_fixes,
+    close_build,
+    implement_build,
+    notify_blocks,
+    prefab_scaffolding,
+    process_triage_output,
+    request_security_audit,
+    summarize_workflow,
+    wait_for_block_resolution,
+)
 from workflows.build_plan import BuildPlanWorkflow
+from workflows.build_pipeline_workflow import BuildPipelineWorkflow
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,8 +42,22 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[BuildPlanWorkflow],
-        activities=[execute_build_phase],
+        workflows=[
+            BuildPlanWorkflow,
+            BuildPipelineWorkflow,
+        ],
+        activities=[
+            execute_build_phase,
+            prefab_scaffolding,
+            implement_build,
+            request_security_audit,
+            process_triage_output,
+            apply_flag_fixes,
+            notify_blocks,
+            wait_for_block_resolution,
+            close_build,
+            summarize_workflow,
+        ],
     )
 
     logger.info(f"Helm Temporal worker started — task queue '{TASK_QUEUE}'")
