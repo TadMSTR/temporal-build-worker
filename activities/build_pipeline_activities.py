@@ -13,6 +13,7 @@ Local activities (4, 6, 7, 9) do their work in-process and return normally.
 
 import asyncio
 import base64
+import os
 import uuid
 import yaml
 from datetime import datetime, timezone
@@ -42,7 +43,9 @@ def _write_task(task: dict) -> None:
     tmp = TASK_QUEUE_DIR / f"{timestamp}-{task_id[:8]}.yml.tmp"
     target = TASK_QUEUE_DIR / f"{timestamp}-{task_id[:8]}.yml"
     TASK_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp.write_text(yaml.dump(task, default_flow_style=False, allow_unicode=True))
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(yaml.dump(task, default_flow_style=False, allow_unicode=True))
     tmp.rename(target)
 
 
