@@ -3,7 +3,7 @@ const path = require('path');
 module.exports = {
   apps: [
     {
-      name: 'helm-temporal-worker',
+      name: 'temporal-build-worker',
       script: 'worker.py',
       interpreter: path.join(__dirname, 'venv/bin/python3'),
       cwd: __dirname,
