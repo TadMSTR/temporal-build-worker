@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-28
+
+### Changed
+- **Renamed** from `helm-temporal-worker` to `temporal-build-worker` — GitHub repo, PM2 service name, directory path, and logger name updated throughout.
+- `NTFY_URL` default changed from a placeholder URL to `""` — ntfy notifications are silently skipped when not configured.
+- `AUDIT_DIR` is now env-configurable via `TEMPORAL_AUDIT_DIR` (default corrected to `~/.claude/comms/artifacts` to match the actual audit report layout).
+- `TEMPORAL_ADDRESS` is now env-configurable via `TEMPORAL_ADDRESS` environment variable (default `localhost:7233`).
+
+### Fixed
+- `notify_blocks`: task file update now uses an atomic tmp→rename write pattern instead of a direct `write_text()` call, preventing partial-write corruption.
+- `_send_ntfy`: was a blocking sync `httpx.post()` inside an async activity — wrapped in `asyncio.to_thread()` to avoid blocking the event loop during notification delivery.
+- `process_triage_output`: raises `ApplicationError(non_retryable=True)` on malformed YAML input instead of silently treating it as an empty triage result.
+
 ## [0.3.0] - 2026-04-12
 
 ### Added
