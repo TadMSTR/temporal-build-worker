@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import signal
 
 from temporalio.client import Client
@@ -24,9 +25,9 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
-logger = logging.getLogger("helm-temporal-worker")
+logger = logging.getLogger("temporal-build-worker")
 
-TEMPORAL_ADDRESS = "localhost:7233"
+TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = "default"
 TASK_QUEUE = "helm-build"
 
@@ -60,11 +61,11 @@ async def main() -> None:
         ],
     )
 
-    logger.info(f"Helm Temporal worker started — task queue '{TASK_QUEUE}'")
+    logger.info(f"Temporal build worker started — task queue '{TASK_QUEUE}', address '{TEMPORAL_ADDRESS}'")
     async with worker:
         await stop_event.wait()
 
-    logger.info("Helm Temporal worker stopped")
+    logger.info("Temporal build worker stopped")
 
 
 if __name__ == "__main__":

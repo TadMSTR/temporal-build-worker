@@ -28,9 +28,11 @@ from models import BuildPhaseResult, TriageOutput
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 TASK_QUEUE_DIR = Path.home() / ".claude" / "task-queue"
-AUDIT_DIR = Path.home() / "repos" / "audits" / "security-audits"
+AUDIT_DIR = Path(
+    os.environ.get("TEMPORAL_AUDIT_DIR", str(Path.home() / ".claude" / "comms" / "artifacts"))
+)
 ACTIVITY_SUMMARY_DIR = Path.home() / "repos" / "personal" / "agent-activity" / "workflows"
-NTFY_URL = os.environ.get("NTFY_URL", "https://ntfy.your-domain.com/claudebox-alerts")
+NTFY_URL = os.environ.get("NTFY_URL", "")
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -100,8 +102,10 @@ def _build_agent_task(
     }
 
 
-def _send_ntfy(title: str, body: str, priority: str = "default", tags: str = "bell") -> None:
-    """Fire-and-forget ntfy notification (best-effort)."""
+def _send_ntfy_sync(title: str, body: str, priority: str = "default", tags: str = "bell") -> None:
+    """Blocking ntfy POST — call via asyncio.to_thread to avoid blocking the event loop."""
+    if not NTFY_URL:
+        return
     try:
         httpx.post(
             NTFY_URL,
@@ -115,6 +119,13 @@ def _send_ntfy(title: str, body: str, priority: str = "default", tags: str = "be
         )
     except Exception as exc:
         activity.logger.warning(f"ntfy notification failed (non-fatal): {exc}")
+
+
+async def _send_ntfy(title: str, body: str, priority: str = "default", tags: str = "bell") -> None:
+    """Async wrapper — offloads the blocking HTTP call to a thread."""
+    if not NTFY_URL:
+        return
+    await asyncio.to_thread(_send_ntfy_sync, title, body, priority, tags)
 
 
 # ─── Activity 1: prefab_scaffolding ──────────────────────────────────────────
@@ -291,7 +302,13 @@ async def process_triage_output(build_name: str) -> TriageOutput:
             "security audit may still be running"
         )
 
-    raw = yaml.safe_load(triage_path.read_text()) or {}
+    from temporalio.exceptions import ApplicationError
+    raw = yaml.safe_load(triage_path.read_text())
+    if not isinstance(raw, dict):
+        raise ApplicationError(
+            f"triage-output.yml is malformed (expected dict, got {type(raw).__name__})",
+            non_retryable=True,
+        )
     blocks = [str(b) for b in raw.get("blocks", []) if b]
     flags = [str(f) for f in raw.get("flags", []) if f]
     info = [str(i) for i in raw.get("info", []) if i]
@@ -359,7 +376,7 @@ async def notify_blocks(
     """
     # Send ntfy per block
     for i, block in enumerate(blocks, 1):
-        _send_ntfy(
+        await _send_ntfy(
             title=f"[ACTION] {build_name}: block {i}/{len(blocks)} needs review",
             body=block,
             priority="high",
@@ -385,9 +402,9 @@ async def notify_blocks(
                     ),
                 }
             )
-            task_file.write_text(
-                yaml.dump(data, default_flow_style=False, allow_unicode=True)
-            )
+            tmp = task_file.with_suffix(".tmp")
+            tmp.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
+            tmp.rename(task_file)
             activity.logger.info(
                 f"Updated task {task_id[:8]} to input-required ({len(blocks)} blocks)"
             )
