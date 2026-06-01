@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-import httpx
+import subprocess
 from temporalio import activity
 
 from models import BuildPhaseResult, TriageOutput
@@ -32,7 +32,10 @@ AUDIT_DIR = Path(
     os.environ.get("TEMPORAL_AUDIT_DIR", str(Path.home() / ".claude" / "comms" / "artifacts"))
 )
 ACTIVITY_SUMMARY_DIR = Path.home() / "repos" / "personal" / "agent-activity" / "workflows"
-NTFY_URL = os.environ.get("NTFY_URL", "")
+MATRIX_ROOM = os.environ.get("MATRIX_ROOM", "sysadmin")
+SEND_MATRIX_SCRIPT = os.environ.get(
+    "SEND_MATRIX_SCRIPT", str(Path.home() / "scripts" / "send-matrix.sh")
+)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -102,30 +105,26 @@ def _build_agent_task(
     }
 
 
-def _send_ntfy_sync(title: str, body: str, priority: str = "default", tags: str = "bell") -> None:
-    """Blocking ntfy POST — call via asyncio.to_thread to avoid blocking the event loop."""
-    if not NTFY_URL:
-        return
+def _send_matrix_sync(message: str) -> None:
+    """Blocking Matrix send via send-matrix.sh — call via asyncio.to_thread."""
     try:
-        httpx.post(
-            NTFY_URL,
-            content=body.encode(),
-            headers={
-                "Title": title,
-                "Tags": tags,
-                "Priority": priority,
-            },
-            timeout=10,
+        result = subprocess.run(
+            [SEND_MATRIX_SCRIPT, MATRIX_ROOM, message],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
+        if result.returncode != 0:
+            activity.logger.warning(
+                f"Matrix notification failed (non-fatal): {result.stderr.strip()}"
+            )
     except Exception as exc:
-        activity.logger.warning(f"ntfy notification failed (non-fatal): {exc}")
+        activity.logger.warning(f"Matrix notification failed (non-fatal): {exc}")
 
 
-async def _send_ntfy(title: str, body: str, priority: str = "default", tags: str = "bell") -> None:
-    """Async wrapper — offloads the blocking HTTP call to a thread."""
-    if not NTFY_URL:
-        return
-    await asyncio.to_thread(_send_ntfy_sync, title, body, priority, tags)
+async def _send_matrix(message: str) -> None:
+    """Async wrapper — offloads the blocking send to a thread."""
+    await asyncio.to_thread(_send_matrix_sync, message)
 
 
 # ─── Activity 1: prefab_scaffolding ──────────────────────────────────────────
@@ -371,18 +370,14 @@ async def notify_blocks(
     build_name: str, task_id: str, blocks: List[str]
 ) -> None:
     """
-    Send an ntfy notification for each blocking security finding and update the
+    Send a Matrix notification for each blocking security finding and update the
     originating task to input-required so Ted knows a decision is needed.
     """
-    # Send ntfy per block
+    # Send Matrix notification per block
     for i, block in enumerate(blocks, 1):
-        await _send_ntfy(
-            title=f"[ACTION] {build_name}: block {i}/{len(blocks)} needs review",
-            body=block,
-            priority="high",
-            tags="warning,action-required",
-        )
-        activity.logger.info(f"Sent ntfy for block {i}/{len(blocks)}: {block[:80]}")
+        message = f"[ACTION] {build_name}: block {i}/{len(blocks)} needs review\n\n{block}"
+        await _send_matrix(message)
+        activity.logger.info(f"Sent Matrix notification for block {i}/{len(blocks)}: {block[:80]}")
 
     # Update the originating task status to input-required
     task_file = _find_task_file(task_id)
@@ -398,7 +393,7 @@ async def notify_blocks(
                     "actor": "temporal-worker",
                     "note": (
                         f"BuildPipelineWorkflow blocked on {len(blocks)} security finding(s) "
-                        f"for '{build_name}'. ntfy sent. Approve task to resume."
+                        f"for '{build_name}'. Matrix notification sent. Approve task to resume."
                     ),
                 }
             )

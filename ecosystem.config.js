@@ -13,6 +13,7 @@ module.exports = {
       exp_backoff_restart_delay_ms: 5000,
       env: {
         PYTHONUNBUFFERED: '1',
+        MATRIX_ROOM: 'sysadmin',
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
     },
