@@ -56,7 +56,13 @@ async def main() -> None:
     tls: TLSConfig | bool = False
     if config.vault_addr and config.vault_role_id and config.vault_secret_id_file:
         try:
-            from vault import fetch_temporal_credentials
+            try:
+                from vault import fetch_temporal_credentials
+            except ImportError as e:
+                raise CredentialError(
+                    "VAULT_ADDR is set but hvac is not installed. "
+                    "Install with: pip install hvac"
+                ) from e
             creds = fetch_temporal_credentials(
                 vault_addr=config.vault_addr,
                 role_id=config.vault_role_id,

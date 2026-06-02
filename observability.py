@@ -13,6 +13,7 @@ from collections.abc import Iterator
 _otel_enabled: bool = False
 _tracer = None
 _meter = None
+_counters: dict[str, object] = {}
 
 
 def init_observability() -> None:
@@ -76,5 +77,6 @@ def inc_counter(name: str, labels: dict[str, str]) -> None:
     if not _otel_enabled or _meter is None:
         return
 
-    counter = _meter.create_counter(name)
-    counter.add(1, labels)
+    if name not in _counters:
+        _counters[name] = _meter.create_counter(name)
+    _counters[name].add(1, labels)
