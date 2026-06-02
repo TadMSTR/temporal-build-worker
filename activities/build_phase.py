@@ -1,4 +1,5 @@
 import base64
+import os
 import uuid
 import yaml
 from datetime import datetime, timezone
@@ -64,10 +65,12 @@ async def execute_build_phase(input: BuildPhaseInput) -> BuildPhaseResult:
         ],
     }
 
-    # Atomic write — same pattern as all other task queue producers
+    # Atomic write with explicit 0o600 — task files contain task_token credentials
     tmp = TASK_QUEUE_DIR / f"{timestamp}-{task_id[:8]}.yml.tmp"
     target = TASK_QUEUE_DIR / f"{timestamp}-{task_id[:8]}.yml"
-    tmp.write_text(yaml.dump(task, default_flow_style=False, allow_unicode=True))
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(yaml.dump(task, default_flow_style=False, allow_unicode=True))
     tmp.rename(target)
 
     alog.info("phase_dispatched", agent=input.agent_type, task_id=task_id[:8])

@@ -422,7 +422,9 @@ async def notify_blocks(
                 }
             )
             tmp = task_file.with_suffix(".tmp")
-            tmp.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(yaml.dump(data, default_flow_style=False, allow_unicode=True))
             tmp.rename(task_file)
             alog.info(
                 "task_input_required",
