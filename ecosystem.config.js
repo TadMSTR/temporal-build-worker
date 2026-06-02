@@ -14,10 +14,13 @@ module.exports = {
       env: {
         PYTHONUNBUFFERED: '1',
         MATRIX_ROOM: 'sysadmin',
-        // Vault mTLS config — set after Phase 6 (sysadmin) provisions certs
-        // VAULT_ADDR: 'http://127.0.0.1:8200',
-        // VAULT_ROLE_ID: '',
-        // VAULT_SECRET_ID_FILE: '/home/ted/.secrets/temporal-worker-secret-id',
+        // SECURITY[accepted]: Vault on loopback HTTP — loopback traffic not reachable externally,
+        // consistent with forge accepted-risks baseline. Audit: temporal-mtls-2026-06.
+        VAULT_ADDR: 'http://127.0.0.1:8200',
+        // SECURITY[info]: role_id is semi-public per Vault AppRole design (analogous to a username).
+        // secret_id is the actual credential, stored in VAULT_SECRET_ID_FILE (chmod 600, not in git).
+        VAULT_ROLE_ID: '0caa3421-5302-7494-df4a-f6f47fc53478',
+        VAULT_SECRET_ID_FILE: '/home/ted/.secrets/temporal-worker-secret-id',
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
     },
