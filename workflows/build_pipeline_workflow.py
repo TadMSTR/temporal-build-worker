@@ -18,6 +18,7 @@ Determinism contract (Temporal replays workflow code on worker restart):
   - All non-deterministic logic lives in activities
 """
 
+import re
 from datetime import timedelta
 
 from temporalio import workflow
@@ -51,6 +52,13 @@ class BuildPipelineWorkflow:
         wf_id = workflow.info().workflow_id
         # workflow.now() is deterministic — safe in workflow code
         started_at = workflow.now().isoformat()
+
+        # I-03: validate build_name before use in file path construction
+        if not re.match(r'^[a-z0-9][a-z0-9-]*$', input.build_name):
+            raise ApplicationError(
+                f"Invalid build_name {input.build_name!r}: must match [a-z0-9][a-z0-9-]*",
+                non_retryable=True,
+            )
 
         # ── 1. Prefab scaffolding ─────────────────────────────────────────────
         await workflow.execute_activity(
