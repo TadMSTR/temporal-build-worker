@@ -14,6 +14,10 @@ module.exports = {
       env: {
         PYTHONUNBUFFERED: '1',
         MATRIX_ROOM: 'sysadmin',
+        // Vault mTLS config — set after Phase 6 (sysadmin) provisions certs
+        // VAULT_ADDR: 'http://127.0.0.1:8200',
+        // VAULT_ROLE_ID: '',
+        // VAULT_SECRET_ID_FILE: '/home/ted/.secrets/temporal-worker-secret-id',
       },
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
     },

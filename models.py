@@ -1,19 +1,26 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import Annotated
 
+from pydantic import BaseModel, Field
+
+
+# ─── BuildPlanWorkflow models (dataclass — serialized by Temporal SDK) ────────
+#
+# These remain @dataclass because Temporal's Python SDK serializes workflow
+# inputs/outputs via dataclasses-json and expects __dataclass_fields__.
 
 @dataclass
 class PhaseSpec:
     number: int
     agent_type: str
     description: str
-    context_refs: List[str] = field(default_factory=list)
+    context_refs: list[str] = field(default_factory=list)
 
 
 @dataclass
 class BuildPlanInput:
     plan_name: str
-    phases: List[PhaseSpec]
+    phases: list[PhaseSpec]
 
 
 @dataclass
@@ -22,7 +29,7 @@ class BuildPhaseInput:
     phase_number: int
     agent_type: str
     description: str
-    context_refs: List[str] = field(default_factory=list)
+    context_refs: list[str] = field(default_factory=list)
     workflow_id: str = ""
 
 
@@ -38,25 +45,22 @@ class BuildPlanResult:
     phases_run: int
 
 
-# --- BuildPipelineWorkflow models ---
+# ─── BuildPipelineWorkflow models (Pydantic — validated at workflow entry) ────
 
-@dataclass
-class BuildPipelineInput:
-    build_name: str       # e.g. "automation-infrastructure"
-    plan_path: str        # e.g. "~/.claude/comms/artifacts/build-plans/automation-infrastructure/plan.md"
-    task_id: str          # ID of the task-queue entry that triggered this workflow
-    target_agent: str     # e.g. "helm-build", "claudebox", "dev"
-
-
-@dataclass
-class TriageOutput:
-    blocks: List[str] = field(default_factory=list)   # issues requiring Ted's decision
-    flags: List[str] = field(default_factory=list)    # auto-fixable issues
-    info: List[str] = field(default_factory=list)     # informational findings
+class BuildPipelineInput(BaseModel):
+    build_name: Annotated[str, Field(pattern=r'^[a-z0-9][a-z0-9-]*$')]
+    plan_path: str
+    task_id: str
+    target_agent: str
 
 
-@dataclass
-class BuildPipelineResult:
+class TriageOutput(BaseModel):
+    blocks: list[str] = []
+    flags: list[str] = []
+    info: list[str] = []
+
+
+class BuildPipelineResult(BaseModel):
     status: str           # "complete" | "failed"
     workflow_id: str
     summary_path: str     # path to the agent-activity summary YAML
