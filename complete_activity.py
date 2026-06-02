@@ -11,17 +11,57 @@ The task_token_b64 comes from the task queue YAML payload.task_token field.
 import asyncio
 import base64
 import logging
+import os
 import sys
 
 import structlog
 
-from temporalio.client import Client
+from temporalio.client import Client, TLSConfig
 from temporalio.exceptions import ApplicationError
 
+from exceptions import CredentialError
 from models import BuildPhaseResult
 
 TEMPORAL_ADDRESS = "localhost:7233"
 TEMPORAL_NAMESPACE = "default"
+
+
+def _build_tls_config(log: structlog.BoundLogger) -> TLSConfig | bool:
+    """
+    Return a TLSConfig if Vault env vars are set, False otherwise.
+    Raises CredentialError if Vault is configured but credential fetch fails.
+    """
+    vault_addr = os.environ.get("VAULT_ADDR")
+    role_id = os.environ.get("VAULT_ROLE_ID")
+    secret_id_file = os.environ.get("VAULT_SECRET_ID_FILE")
+
+    if not (vault_addr and role_id and secret_id_file):
+        log.warning("tls_disabled", reason="no_vault_config")
+        return False
+
+    try:
+        try:
+            from vault import fetch_temporal_credentials
+        except ImportError as e:
+            raise CredentialError(
+                "VAULT_ADDR is set but hvac is not installed. "
+                "Install with: pip install hvac"
+            ) from e
+
+        creds = fetch_temporal_credentials(
+            vault_addr=vault_addr,
+            role_id=role_id,
+            secret_id_file=secret_id_file,
+        )
+        log.info("tls_enabled", vault_addr=vault_addr)
+        return TLSConfig(
+            server_root_ca_cert=creds.ca_cert_pem,
+            client_cert=creds.client_cert_pem,
+            client_private_key=creds.client_key_pem,
+        )
+    except CredentialError as e:
+        log.error("tls_credential_error", error=str(e))
+        raise
 
 
 def _configure_logging() -> None:
@@ -59,7 +99,8 @@ async def main() -> None:
         log.error("invalid_task_token", error=str(e))
         sys.exit(1)
 
-    client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE)
+    tls = _build_tls_config(log)
+    client = await Client.connect(TEMPORAL_ADDRESS, namespace=TEMPORAL_NAMESPACE, tls=tls)
     handle = client.get_async_activity_handle(task_token=task_token)
 
     if status == "success":
