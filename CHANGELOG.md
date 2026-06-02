@@ -8,6 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-01
+
+### Added
+- Worker-side mTLS via HashiCorp Vault AppRole (`vault.py`) — fetches CA cert, client cert, and client private key from `secret/data/temporal/worker` at startup; passes `TLSConfig` to `Client.connect()`. Graceful plaintext fallback when Vault env vars are not set.
+- `complete_activity.py` now supports Vault mTLS via the same env-var pattern (`VAULT_ADDR`, `VAULT_ROLE_ID`, `VAULT_SECRET_ID_FILE`) — prevents workflow stall when `requireClientAuth: true` is enabled on the Temporal server (M-01).
+- `config.py` — `WorkerConfig` Pydantic model with validated env var loading.
+- `exceptions.py` — custom exception hierarchy (`TemporalWorkerError`, `ConfigError`, `CredentialError`, `ActivityRuntimeError`).
+- `observability.py` — opt-in OpenTelemetry tracing and metrics stubs; no-op when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset.
+
+### Changed
+- Structured logging via `structlog` throughout — JSON format, `worker_id` bound per process, `workflow_id` + `activity_type` bound per activity invocation.
+- `BuildPipelineInput`, `TriageOutput`, `BuildPipelineResult` converted from dataclasses to Pydantic `BaseModel`; `pydantic_data_converter` registered on `Client`.
+- `build_name` validated with `Field(pattern=r'^[a-z0-9][a-z0-9-]*$')` at Pydantic deserialization — removes inline `re.match` from workflow code.
+- `apply_flag_fixes` instruction now wraps triage flag content in `<security-findings>` delimiters to prevent prompt injection across agent trust boundaries (L-02).
+- `inc_counter` caches OTel counter instruments by name to avoid duplicate instrument registration (I-02).
+
+### Fixed
+- `build_phase.py` and `notify_blocks`: task queue files containing `task_token` credentials now written with `os.open(O_WRONLY|O_CREAT|O_TRUNC, 0o600)` — prevents umask-derived 0o644 permissions (FW-03).
+- `worker.py`: `ImportError` from missing `hvac` package is now caught and re-raised as `CredentialError` with an actionable message (L-01).
+
+### Removed
+- `httpx` dependency — unused in source (I-03).
+
 ## [0.4.0] - 2026-05-28
 
 ### Changed
@@ -45,7 +68,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - Initial worker: `BuildPlanWorkflow` skeleton, async activity completion pattern, gitignore for core dumps.
 
-[Unreleased]: https://github.com/TadMSTR/helm-temporal-worker/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/TadMSTR/helm-temporal-worker/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/TadMSTR/helm-temporal-worker/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/TadMSTR/helm-temporal-worker/releases/tag/v0.1.0
+[Unreleased]: https://github.com/TadMSTR/temporal-build-worker/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/TadMSTR/temporal-build-worker/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/TadMSTR/temporal-build-worker/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/TadMSTR/temporal-build-worker/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/TadMSTR/temporal-build-worker/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/TadMSTR/temporal-build-worker/releases/tag/v0.1.0
