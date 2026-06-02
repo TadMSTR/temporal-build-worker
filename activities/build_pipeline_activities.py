@@ -18,12 +18,18 @@ import uuid
 import yaml
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 import subprocess
+import structlog
 from temporalio import activity
 
 from models import BuildPhaseResult, TriageOutput
+from observability import activity_span, inc_counter
+
+# ─── Module logger ────────────────────────────────────────────────────────────
+
+log = structlog.get_logger(__name__)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -115,11 +121,9 @@ def _send_matrix_sync(message: str) -> None:
             timeout=15,
         )
         if result.returncode != 0:
-            activity.logger.warning(
-                f"Matrix notification failed (non-fatal): {result.stderr.strip()}"
-            )
+            log.warning("matrix_send_failed", stderr=result.stderr.strip())
     except Exception as exc:
-        activity.logger.warning(f"Matrix notification failed (non-fatal): {exc}")
+        log.warning("matrix_send_failed", error=str(exc))
 
 
 async def _send_matrix(message: str) -> None:
@@ -137,31 +141,34 @@ async def prefab_scaffolding(build_name: str, plan_path: str) -> BuildPhaseResul
     Uses task_token pattern — completed externally by the claudebox agent.
     """
     info = activity.info()
+    alog = log.bind(workflow_id=info.workflow_id, activity=info.activity_type)
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     task_token_b64 = base64.b64encode(info.task_token).decode()
 
-    task = _build_agent_task(
-        task_id=task_id,
-        target_agent="claudebox",
-        task_type="build_prefab",
-        summary=f"Prefab scaffolding for build '{build_name}'",
-        payload={
-            "build_name": build_name,
-            "plan_path": plan_path,
-            "instruction": (
-                f"Run the build-plan-prefab skill for build '{build_name}'. "
-                f"Plan is at: {plan_path}. "
-                "After prefab completes, call: "
-                "python3 ~/repos/personal/helm-temporal-worker/complete_activity.py "
-                "$TASK_TOKEN success 'prefab-complete'"
-            ),
-        },
-        task_token_b64=task_token_b64,
-        now=now,
-    )
-    _write_task(task)
-    activity.logger.info(f"Dispatched prefab task {task_id[:8]} for build '{build_name}'")
+    with activity_span("prefab_scaffolding", build=build_name):
+        task = _build_agent_task(
+            task_id=task_id,
+            target_agent="claudebox",
+            task_type="build_prefab",
+            summary=f"Prefab scaffolding for build '{build_name}'",
+            payload={
+                "build_name": build_name,
+                "plan_path": plan_path,
+                "instruction": (
+                    f"Run the build-plan-prefab skill for build '{build_name}'. "
+                    f"Plan is at: {plan_path}. "
+                    "After prefab completes, call: "
+                    "python3 ~/repos/personal/temporal-build-worker/complete_activity.py "
+                    "$TASK_TOKEN success 'prefab-complete'"
+                ),
+            },
+            task_token_b64=task_token_b64,
+            now=now,
+        )
+        _write_task(task)
+        alog.info("prefab_dispatched", build=build_name, task_id=task_id[:8])
+        inc_counter("activity.dispatched", {"activity": "prefab_scaffolding", "build": build_name})
     activity.raise_complete_async()
 
 
@@ -176,33 +183,34 @@ async def implement_build(
     Uses task_token pattern — completed externally when the agent finishes the build.
     """
     info = activity.info()
+    alog = log.bind(workflow_id=info.workflow_id, activity=info.activity_type)
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     task_token_b64 = base64.b64encode(info.task_token).decode()
 
-    task = _build_agent_task(
-        task_id=task_id,
-        target_agent=target_agent,
-        task_type="build_plan",
-        summary=f"Implement build: {build_name}",
-        payload={
-            "build_name": build_name,
-            "originating_task_id": originating_task_id,
-            "instruction": (
-                f"Execute the build plan for '{build_name}'. "
-                "Follow the standard phase-gated build workflow. "
-                "When the build is complete and verified, call: "
-                "python3 ~/repos/personal/helm-temporal-worker/complete_activity.py "
-                "$TASK_TOKEN success 'build-complete'"
-            ),
-        },
-        task_token_b64=task_token_b64,
-        now=now,
-    )
-    _write_task(task)
-    activity.logger.info(
-        f"Dispatched build task {task_id[:8]} for '{build_name}' to {target_agent}"
-    )
+    with activity_span("implement_build", build=build_name, agent=target_agent):
+        task = _build_agent_task(
+            task_id=task_id,
+            target_agent=target_agent,
+            task_type="build_plan",
+            summary=f"Implement build: {build_name}",
+            payload={
+                "build_name": build_name,
+                "originating_task_id": originating_task_id,
+                "instruction": (
+                    f"Execute the build plan for '{build_name}'. "
+                    "Follow the standard phase-gated build workflow. "
+                    "When the build is complete and verified, call: "
+                    "python3 ~/repos/personal/temporal-build-worker/complete_activity.py "
+                    "$TASK_TOKEN success 'build-complete'"
+                ),
+            },
+            task_token_b64=task_token_b64,
+            now=now,
+        )
+        _write_task(task)
+        alog.info("build_dispatched", build=build_name, agent=target_agent, task_id=task_id[:8])
+        inc_counter("activity.dispatched", {"activity": "implement_build", "build": build_name})
     activity.raise_complete_async()
 
 
@@ -215,6 +223,7 @@ async def request_security_audit(build_name: str, plan_path: str) -> BuildPhaseR
     Uses task_token pattern — completed externally when the security agent finishes.
     """
     info = activity.info()
+    alog = log.bind(workflow_id=info.workflow_id, activity=info.activity_type)
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     task_token_b64 = base64.b64encode(info.task_token).decode()
@@ -254,35 +263,39 @@ async def request_security_audit(build_name: str, plan_path: str) -> BuildPhaseR
         "## Completion\n\n"
         "After writing both files, call:\n"
         "```\n"
-        "python3 ~/repos/personal/helm-temporal-worker/complete_activity.py "
+        "python3 ~/repos/personal/temporal-build-worker/complete_activity.py "
         "$TASK_TOKEN success 'audit-complete'\n"
         "```\n"
     )
 
-    task = _build_agent_task(
-        task_id=task_id,
-        target_agent="security-agent",
-        task_type="security_audit",
-        summary=f"Security audit for build '{build_name}'",
-        payload={
-            "build_name": build_name,
-            "plan_path": plan_path,
-            "audit_request_path": str(request_path),
-            "output_dir": str(audit_dir),
-            "instruction": (
-                f"Run a security audit for build '{build_name}'. "
-                f"Request details: {request_path}. "
-                "Write report.md and triage-output.yml to the output_dir, then call temporal-complete."
-            ),
-        },
-        task_token_b64=task_token_b64,
-        now=now,
-    )
-    _write_task(task)
-    activity.logger.info(
-        f"Dispatched security audit task {task_id[:8]} for '{build_name}'; "
-        f"request at {request_path}"
-    )
+    with activity_span("request_security_audit", build=build_name):
+        task = _build_agent_task(
+            task_id=task_id,
+            target_agent="security-agent",
+            task_type="security_audit",
+            summary=f"Security audit for build '{build_name}'",
+            payload={
+                "build_name": build_name,
+                "plan_path": plan_path,
+                "audit_request_path": str(request_path),
+                "output_dir": str(audit_dir),
+                "instruction": (
+                    f"Run a security audit for build '{build_name}'. "
+                    f"Request details: {request_path}. "
+                    "Write report.md and triage-output.yml to the output_dir, then call temporal-complete."
+                ),
+            },
+            task_token_b64=task_token_b64,
+            now=now,
+        )
+        _write_task(task)
+        alog.info(
+            "audit_dispatched",
+            build=build_name,
+            task_id=task_id[:8],
+            request_path=str(request_path),
+        )
+        inc_counter("activity.dispatched", {"activity": "request_security_audit", "build": build_name})
     activity.raise_complete_async()
 
 
@@ -310,56 +323,65 @@ async def process_triage_output(build_name: str) -> TriageOutput:
         )
     blocks = [str(b) for b in raw.get("blocks", []) if b]
     flags = [str(f) for f in raw.get("flags", []) if f]
-    info = [str(i) for i in raw.get("info", []) if i]
+    info_items = [str(i) for i in raw.get("info", []) if i]
 
-    activity.logger.info(
-        f"Triage for '{build_name}': "
-        f"{len(blocks)} blocks, {len(flags)} flags, {len(info)} info"
+    log.info(
+        "triage_processed",
+        build=build_name,
+        blocks=len(blocks),
+        flags=len(flags),
+        info=len(info_items),
     )
-    return TriageOutput(blocks=blocks, flags=flags, info=info)
+    return TriageOutput(blocks=blocks, flags=flags, info=info_items)
 
 
 # ─── Activity 5: apply_flag_fixes ────────────────────────────────────────────
 
 @activity.defn
 async def apply_flag_fixes(
-    build_name: str, flags: List[str], target_agent: str
+    build_name: str, flags: list[str], target_agent: str
 ) -> BuildPhaseResult:
     """
     Dispatch a task to the build agent to apply auto-fixable security findings (flags).
     Uses task_token pattern — completed externally when fixes are committed.
     """
     info = activity.info()
+    alog = log.bind(workflow_id=info.workflow_id, activity=info.activity_type)
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     task_token_b64 = base64.b64encode(info.task_token).decode()
 
     flags_text = "\n".join(f"- {f}" for f in flags)
-    task = _build_agent_task(
-        task_id=task_id,
-        target_agent=target_agent,
-        task_type="security_fix",
-        summary=f"Apply security flag fixes for build '{build_name}' ({len(flags)} items)",
-        payload={
-            "build_name": build_name,
-            "flags": flags,
-            "instruction": (
-                f"Apply the following auto-fixable security findings for build '{build_name}':\n\n"
-                f"{flags_text}\n\n"
-                "For each flag: apply the fix, commit the change, and record the commit hash. "
-                "After all flags are resolved, call:\n"
-                "python3 ~/repos/personal/helm-temporal-worker/complete_activity.py "
-                "$TASK_TOKEN success 'flags-applied'"
-            ),
-        },
-        task_token_b64=task_token_b64,
-        now=now,
-    )
-    _write_task(task)
-    activity.logger.info(
-        f"Dispatched flag-fix task {task_id[:8]} for '{build_name}' "
-        f"({len(flags)} flags) to {target_agent}"
-    )
+    with activity_span("apply_flag_fixes", build=build_name, agent=target_agent):
+        task = _build_agent_task(
+            task_id=task_id,
+            target_agent=target_agent,
+            task_type="security_fix",
+            summary=f"Apply security flag fixes for build '{build_name}' ({len(flags)} items)",
+            payload={
+                "build_name": build_name,
+                "flags": flags,
+                "instruction": (
+                    f"Apply the following auto-fixable security findings for build '{build_name}':\n\n"
+                    f"{flags_text}\n\n"
+                    "For each flag: apply the fix, commit the change, and record the commit hash. "
+                    "After all flags are resolved, call:\n"
+                    "python3 ~/repos/personal/temporal-build-worker/complete_activity.py "
+                    "$TASK_TOKEN success 'flags-applied'"
+                ),
+            },
+            task_token_b64=task_token_b64,
+            now=now,
+        )
+        _write_task(task)
+        alog.info(
+            "flags_dispatched",
+            build=build_name,
+            agent=target_agent,
+            task_id=task_id[:8],
+            flag_count=len(flags),
+        )
+        inc_counter("activity.dispatched", {"activity": "apply_flag_fixes", "build": build_name})
     activity.raise_complete_async()
 
 
@@ -367,17 +389,19 @@ async def apply_flag_fixes(
 
 @activity.defn
 async def notify_blocks(
-    build_name: str, task_id: str, blocks: List[str]
+    build_name: str, task_id: str, blocks: list[str]
 ) -> None:
     """
     Send a Matrix notification for each blocking security finding and update the
     originating task to input-required so Ted knows a decision is needed.
     """
-    # Send Matrix notification per block
+    info = activity.info()
+    alog = log.bind(workflow_id=info.workflow_id, activity=info.activity_type)
+
     for i, block in enumerate(blocks, 1):
         message = f"[ACTION] {build_name}: block {i}/{len(blocks)} needs review\n\n{block}"
         await _send_matrix(message)
-        activity.logger.info(f"Sent Matrix notification for block {i}/{len(blocks)}: {block[:80]}")
+        alog.info("block_notified", build=build_name, index=i, total=len(blocks))
 
     # Update the originating task status to input-required
     task_file = _find_task_file(task_id)
@@ -400,15 +424,15 @@ async def notify_blocks(
             tmp = task_file.with_suffix(".tmp")
             tmp.write_text(yaml.dump(data, default_flow_style=False, allow_unicode=True))
             tmp.rename(task_file)
-            activity.logger.info(
-                f"Updated task {task_id[:8]} to input-required ({len(blocks)} blocks)"
+            alog.info(
+                "task_input_required",
+                task_id=task_id[:8],
+                block_count=len(blocks),
             )
         except Exception as exc:
-            activity.logger.warning(f"Could not update task status (non-fatal): {exc}")
+            alog.warning("task_update_failed", task_id=task_id[:8], error=str(exc))
     else:
-        activity.logger.warning(
-            f"Task {task_id[:8]} not found in queue — could not set input-required"
-        )
+        alog.warning("task_not_found", task_id=task_id[:8])
 
 
 # ─── Activity 7: wait_for_block_resolution ───────────────────────────────────
@@ -420,9 +444,10 @@ async def wait_for_block_resolution(build_name: str, task_id: str) -> None:
     Heartbeats every 5 minutes so Temporal knows the activity is alive.
     Schedule-to-close timeout of 7 days is set in the workflow.
     """
-    activity.logger.info(
-        f"Waiting for block resolution on task {task_id[:8]} (build: {build_name})"
-    )
+    info = activity.info()
+    alog = log.bind(workflow_id=info.workflow_id, activity=info.activity_type)
+    alog.info("waiting_for_resolution", build=build_name, task_id=task_id[:8])
+
     while True:
         task_file = _find_task_file(task_id)
         if task_file:
@@ -430,21 +455,14 @@ async def wait_for_block_resolution(build_name: str, task_id: str) -> None:
                 data = yaml.safe_load(task_file.read_text())
                 status = data.get("status", "")
                 if status == "approved":
-                    activity.logger.info(
-                        f"Task {task_id[:8]} approved — blocks resolved, resuming pipeline"
-                    )
+                    alog.info("blocks_resolved", task_id=task_id[:8])
                     return
-                activity.logger.info(
-                    f"Task {task_id[:8]} status={status!r}, still waiting..."
-                )
+                alog.info("still_waiting", task_id=task_id[:8], status=status)
             except Exception as exc:
-                activity.logger.warning(f"Error reading task file (will retry): {exc}")
+                alog.warning("task_read_error", task_id=task_id[:8], error=str(exc))
         else:
-            activity.logger.warning(
-                f"Task {task_id[:8]} not found — still waiting for it to appear"
-            )
+            alog.warning("task_not_found", task_id=task_id[:8])
 
-        # Heartbeat so Temporal knows we're alive
         activity.heartbeat(
             {"build_name": build_name, "task_id": task_id, "checked_at": datetime.now(timezone.utc).isoformat()}
         )
@@ -461,33 +479,34 @@ async def close_build(build_name: str, target_agent: str) -> BuildPhaseResult:
     in the output field (e.g. temporal-complete $TOKEN success /path/to/closeout/).
     """
     info = activity.info()
+    alog = log.bind(workflow_id=info.workflow_id, activity=info.activity_type)
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     task_token_b64 = base64.b64encode(info.task_token).decode()
 
-    task = _build_agent_task(
-        task_id=task_id,
-        target_agent=target_agent,
-        task_type="build_closeout",
-        summary=f"Close out build '{build_name}'",
-        payload={
-            "build_name": build_name,
-            "instruction": (
-                f"Run the build-close-out skill for '{build_name}'. "
-                "After close-out is complete and the closeout artifact is written, call:\n"
-                "python3 ~/repos/personal/helm-temporal-worker/complete_activity.py "
-                "$TASK_TOKEN success <closeout_artifact_path>\n\n"
-                "Pass the absolute path to the closeout artifact directory or file as the "
-                "third argument — it will be recorded in the workflow summary."
-            ),
-        },
-        task_token_b64=task_token_b64,
-        now=now,
-    )
-    _write_task(task)
-    activity.logger.info(
-        f"Dispatched close-out task {task_id[:8]} for '{build_name}' to {target_agent}"
-    )
+    with activity_span("close_build", build=build_name, agent=target_agent):
+        task = _build_agent_task(
+            task_id=task_id,
+            target_agent=target_agent,
+            task_type="build_closeout",
+            summary=f"Close out build '{build_name}'",
+            payload={
+                "build_name": build_name,
+                "instruction": (
+                    f"Run the build-close-out skill for '{build_name}'. "
+                    "After close-out is complete and the closeout artifact is written, call:\n"
+                    "python3 ~/repos/personal/temporal-build-worker/complete_activity.py "
+                    "$TASK_TOKEN success <closeout_artifact_path>\n\n"
+                    "Pass the absolute path to the closeout artifact directory or file as the "
+                    "third argument — it will be recorded in the workflow summary."
+                ),
+            },
+            task_token_b64=task_token_b64,
+            now=now,
+        )
+        _write_task(task)
+        alog.info("closeout_dispatched", build=build_name, agent=target_agent, task_id=task_id[:8])
+        inc_counter("activity.dispatched", {"activity": "close_build", "build": build_name})
     activity.raise_complete_async()
 
 
@@ -499,7 +518,7 @@ async def summarize_workflow(
     build_name: str,
     started_at: str,
     completed_at: str,
-    phases_completed: List[str],
+    phases_completed: list[str],
     blocks_hit: int,
     flags_applied: int,
     plan_path: str,
@@ -509,7 +528,9 @@ async def summarize_workflow(
     Write a YAML workflow summary to the agent-activity repo.
     Returns the path to the written file.
     """
-    # Derive YYYY-MM from started_at (ISO string from workflow.now())
+    info = activity.info()
+    alog = log.bind(workflow_id=info.workflow_id, activity=info.activity_type)
+
     try:
         dt = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
         month_dir = dt.strftime("%Y-%m")
@@ -536,5 +557,5 @@ async def summarize_workflow(
     }
     summary_path.write_text(yaml.dump(summary, default_flow_style=False, allow_unicode=True))
 
-    activity.logger.info(f"Workflow summary written to {summary_path}")
+    alog.info("summary_written", path=str(summary_path), outcome=outcome)
     return str(summary_path)

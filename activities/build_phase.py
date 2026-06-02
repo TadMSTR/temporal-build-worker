@@ -4,9 +4,12 @@ import yaml
 from datetime import datetime, timezone
 from pathlib import Path
 
+import structlog
 from temporalio import activity
 
 from models import BuildPhaseInput, BuildPhaseResult
+
+log = structlog.get_logger(__name__)
 
 TASK_QUEUE_DIR = Path.home() / ".claude" / "task-queue"
 
@@ -14,6 +17,12 @@ TASK_QUEUE_DIR = Path.home() / ".claude" / "task-queue"
 @activity.defn
 async def execute_build_phase(input: BuildPhaseInput) -> BuildPhaseResult:
     info = activity.info()
+    alog = log.bind(
+        workflow_id=info.workflow_id,
+        activity=info.activity_type,
+        phase=input.phase_number,
+        plan=input.plan_name,
+    )
     task_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
     timestamp = now.strftime("%Y%m%d-%H%M%S")
@@ -61,10 +70,7 @@ async def execute_build_phase(input: BuildPhaseInput) -> BuildPhaseResult:
     tmp.write_text(yaml.dump(task, default_flow_style=False, allow_unicode=True))
     tmp.rename(target)
 
-    activity.logger.info(
-        f"Dispatched phase {input.phase_number} of '{input.plan_name}' "
-        f"to {input.agent_type} as task {task_id[:8]}"
-    )
+    alog.info("phase_dispatched", agent=input.agent_type, task_id=task_id[:8])
 
     # Signal async completion — activity will be externally completed by
     # Claude Code running complete_activity.py after the phase closes out.
