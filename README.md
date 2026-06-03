@@ -2,7 +2,7 @@
 
 Python Temporal worker that drives autonomous build pipelines on the forge agent platform. Bridges [Temporal](https://temporal.io/) durable execution to Claude Code agent sessions via the task-queue async activity completion pattern.
 
-Current version: **v0.5.0**
+Current version: **v0.5.0** ([CHANGELOG](CHANGELOG.md))
 
 ---
 
