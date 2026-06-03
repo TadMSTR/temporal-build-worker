@@ -36,6 +36,11 @@ def _build_tls_config(log: structlog.BoundLogger) -> TLSConfig | bool:
     secret_id_file = os.environ.get("VAULT_SECRET_ID_FILE")
 
     if not (vault_addr and role_id and secret_id_file):
+        if os.environ.get("TEMPORAL_REQUIRE_TLS", "").lower() in ("1", "true", "yes"):
+            raise CredentialError(
+                "TEMPORAL_REQUIRE_TLS is set but no Vault credentials configured. "
+                "Set VAULT_ADDR, VAULT_ROLE_ID, and VAULT_SECRET_ID_FILE."
+            )
         log.warning("tls_disabled", reason="no_vault_config")
         return False
 
