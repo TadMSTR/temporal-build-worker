@@ -131,6 +131,19 @@ async def _send_matrix(message: str) -> None:
     await asyncio.to_thread(_send_matrix_sync, message)
 
 
+_MAX_FINDING_LEN = 500
+
+
+def _sanitize_finding(text: str) -> str:
+    """Collapse internal whitespace and truncate a security finding description.
+
+    Collapses multi-line content to a single line (prevents newline-based
+    attempts to escape the <security-findings> delimiters) and caps length
+    to limit injection payload size.
+    """
+    return " ".join(text.split())[:_MAX_FINDING_LEN]
+
+
 # ─── Activity 1: prefab_scaffolding ──────────────────────────────────────────
 
 @activity.defn
@@ -351,7 +364,7 @@ async def apply_flag_fixes(
     now = datetime.now(timezone.utc)
     task_token_b64 = base64.b64encode(info.task_token).decode()
 
-    flags_text = "\n".join(f"- {f}" for f in flags)
+    flags_text = "\n".join(f"- {_sanitize_finding(f)}" for f in flags)
     with activity_span("apply_flag_fixes", build=build_name, agent=target_agent):
         task = _build_agent_task(
             task_id=task_id,

@@ -27,6 +27,7 @@ class WorkerConfig(BaseModel):
     vault_addr: str | None = None
     vault_role_id: str | None = None
     vault_secret_id_file: str | None = None
+    require_tls: bool = False
 
 
 def load_config() -> WorkerConfig:
@@ -47,6 +48,7 @@ def load_config() -> WorkerConfig:
         vault_addr=os.environ.get("VAULT_ADDR") or None,
         vault_role_id=os.environ.get("VAULT_ROLE_ID") or None,
         vault_secret_id_file=secret_id_file or None,
+        require_tls=os.environ.get("TEMPORAL_REQUIRE_TLS", "").lower() in ("1", "true", "yes"),
     )
 
     log.info(
@@ -57,5 +59,6 @@ def load_config() -> WorkerConfig:
         matrix_room=config.matrix_room,
         log_level=config.log_level,
         vault_configured=config.vault_addr is not None,
+        require_tls=config.require_tls,
     )
     return config

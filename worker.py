@@ -78,6 +78,11 @@ async def main() -> None:
             log.error("tls_credential_error", error=str(e))
             raise
     else:
+        if config.require_tls:
+            raise CredentialError(
+                "TEMPORAL_REQUIRE_TLS is set but no Vault credentials configured. "
+                "Set VAULT_ADDR, VAULT_ROLE_ID, and VAULT_SECRET_ID_FILE."
+            )
         log.warning("tls_disabled", reason="no_vault_config")
 
     log.info(
