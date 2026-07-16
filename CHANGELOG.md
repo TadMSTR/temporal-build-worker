@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `_send_matrix_sync`: strip `NODE_CHANNEL_FD`, `NODE_CHANNEL_SERIALIZATION_MODE`, and `NODE_UNIQUE_ID`
+  from the `send-matrix.sh` subprocess environment. PM2 injects these for its own IPC channel; this
+  worker runs under PM2 (confirmed live, `pm2 list` id 32). Note: TBLD-5 as filed assumed this file
+  runs Node.js builds (pnpm/npm/tsc) directly — it does not. Build activities delegate real work to
+  agents via the task-queue `task_token` pattern; the only `subprocess.run` in this file invokes the
+  bash/python `send-matrix.sh` notifier, not a Node.js process. Fixed defensively for consistency with
+  the sibling repos regardless. (TBLD-5, sibling to HLOPS-1)
+
 ## [0.5.0] - 2026-06-01
 
 ### Added
