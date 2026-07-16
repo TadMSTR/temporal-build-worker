@@ -228,3 +228,37 @@ def test_process_triage_output_empty_sections(tmp_path, monkeypatch):
     assert result.blocks == []
     assert result.flags == []
     assert result.info == []
+
+
+# ── _clean_env / _send_matrix_sync (TBLD-5) ────────────────────────────────────
+
+
+def test_clean_env_strips_pm2_vars(monkeypatch):
+    import activities.build_pipeline_activities as act
+
+    for var in act._PM2_IPC_ENV_VARS:
+        monkeypatch.setenv(var, "leaked")
+    monkeypatch.setenv("KEEP_ME", "yes")
+
+    env = act._clean_env()
+
+    for var in act._PM2_IPC_ENV_VARS:
+        assert var not in env
+    assert env["KEEP_ME"] == "yes"
+
+
+def test_send_matrix_sync_strips_pm2_ipc_vars_from_child_env(monkeypatch):
+    """Regression for TBLD-5: send-matrix.sh's child env must not carry PM2's IPC vars."""
+    import activities.build_pipeline_activities as act
+
+    for var in act._PM2_IPC_ENV_VARS:
+        monkeypatch.setenv(var, "leaked")
+
+    fake_result = type("R", (), {"returncode": 0, "stderr": ""})()
+    with patch("activities.build_pipeline_activities.subprocess.run", return_value=fake_result) as run:
+        act._send_matrix_sync("hello")
+
+    env = run.call_args.kwargs.get("env")
+    assert env is not None
+    for var in act._PM2_IPC_ENV_VARS:
+        assert var not in env

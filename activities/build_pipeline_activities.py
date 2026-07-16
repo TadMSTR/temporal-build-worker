@@ -43,8 +43,23 @@ SEND_MATRIX_SCRIPT = os.environ.get(
     "SEND_MATRIX_SCRIPT", str(Path.home() / "scripts" / "send-matrix.sh")
 )
 
+# PM2 sets these variables in the process environment for its own IPC channel.
+# If they leak into spawned children, any Node.js child inherits a stray file
+# descriptor and SIGABRTs during process teardown — 100% reproducible via a
+# shelled-out command, 0% via a direct shell. Strip them before exec so
+# subprocess.run children run in a clean environment. (HLOPS-1, TBLD-5)
+_PM2_IPC_ENV_VARS = (
+    "NODE_CHANNEL_FD",
+    "NODE_CHANNEL_SERIALIZATION_MODE",
+    "NODE_UNIQUE_ID",
+)
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _clean_env() -> dict:
+    """Return a copy of the current environment with PM2 IPC vars stripped."""
+    return {k: v for k, v in os.environ.items() if k not in _PM2_IPC_ENV_VARS}
 
 def _write_task(task: dict) -> None:
     """Atomically write a task YAML to the task queue."""
@@ -119,6 +134,7 @@ def _send_matrix_sync(message: str) -> None:
             capture_output=True,
             text=True,
             timeout=15,
+            env=_clean_env(),
         )
         if result.returncode != 0:
             log.warning("matrix_send_failed", stderr=result.stderr.strip())
